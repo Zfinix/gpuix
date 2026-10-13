@@ -88,6 +88,10 @@ pub struct EventPayload {
     /// Populated for: scroll (trackpad gestures).
     pub touch_phase: Option<String>,
 
+    /// Change in scale for this step of a pinch: 0.1 is 10% larger, negative shrinks.
+    /// Populated for: pinch (trackpad).
+    pub zoom_delta: Option<f64>,
+
     // ── Hover ────────────────────────────────────────────────────────
     /// true = mouse entered element, false = mouse left element.
     /// Populated for: mouseEnter, mouseLeave.
@@ -160,6 +164,7 @@ impl Default for EventPayload {
             delta_y: None,
             precise: None,
             touch_phase: None,
+            zoom_delta: None,
             hovered: None,
             value: None,
             old_line: None,

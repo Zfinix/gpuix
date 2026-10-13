@@ -360,6 +360,11 @@ export interface EventPayload {
    */
   touchPhase?: string
   /**
+   * Change in scale for this step of a pinch: 0.1 is 10% larger, negative shrinks.
+   * Populated for: pinch (trackpad).
+   */
+  zoomDelta?: number
+  /**
    * true = mouse entered element, false = mouse left element.
    * Populated for: mouseEnter, mouseLeave.
    */

@@ -108,6 +108,7 @@ export const EVENT_PROPS = [
   ["onFocus", "focus"],
   ["onBlur", "blur"],
   ["onScroll", "scroll"],
+  ["onPinch", "pinch"],
   ["onLayout", "layout"],
   ["onScrollChange", "scrollChange"],
   ["onFileDrop", "fileDrop"],

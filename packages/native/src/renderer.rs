@@ -5834,6 +5834,25 @@ pub(crate) fn build_host_container(
                 });
             }
 
+            // ── Trackpad pinch ───────────────────────────────────
+            "pinch" => {
+                el = el.on_pinch(move |pinch_event, _window, _cx| {
+                    emit_event_full(&callback, id, "pinch", |p| {
+                        let (x, y) = point_to_xy(pinch_event.position);
+                        p.x = Some(x);
+                        p.y = Some(y);
+                        p.modifiers = Some(pinch_event.modifiers.into());
+                        p.zoom_delta = Some(f64::from(pinch_event.delta));
+                        p.touch_phase = Some(match pinch_event.phase {
+                            gpui::TouchPhase::Started => "started".to_string(),
+                            gpui::TouchPhase::Moved => "moved".to_string(),
+                            gpui::TouchPhase::Ended => "ended".to_string(),
+                            gpui::TouchPhase::Cancelled => "cancelled".to_string(),
+                        });
+                    });
+                });
+            }
+
             // ── Key down ─────────────────────────────────────────
             // Requires .focusable() (set above). Element must be focused
             // (clicked or tabbed to) for these to fire.

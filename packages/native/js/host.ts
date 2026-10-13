@@ -436,6 +436,8 @@ export interface HostProps {
 
   // ── Scroll events ──────────────────────────────────────────────
   onScroll?: (event: EventPayload) => void
+  /** Trackpad pinch: `zoomDelta` is the change in scale, positive when zooming in; `touchPhase` tracks the gesture. */
+  onPinch?: (event: EventPayload) => void
 
   /**
    * The scroll offset of a `overflow: "scroll"` element changed, however it
