@@ -59,6 +59,12 @@ export declare class GpuixRenderer {
    * Acquires the tree mutex ONCE for the entire batch.
    */
   applyBatch(json: string): Array<number>
+  /**
+   * Call `wake` at every vsync that requests a frame, so the JS loop can tick
+   * on the refresh instead of waiting for its timer. Pass null to stop.
+   * Wakes coalesce until the next `tick()`. A no-op off macOS.
+   */
+  setFrameWake(wake: (() => void) | null): void
   /** Pump the native event loop. Returns false after the last window closes. */
   tick(): boolean
   isInitialized(): boolean

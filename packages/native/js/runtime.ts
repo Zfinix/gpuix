@@ -47,7 +47,7 @@ export function createNativeRenderer(
 }
 
 export function startFrameLoop(
-  renderer: Pick<GpuixRenderer, "requiresTick" | "tick">,
+  renderer: Pick<GpuixRenderer, "requiresTick" | "tick"> & Partial<Pick<GpuixRenderer, "setFrameWake">>,
   options: {
     frameMs?: number
     onTerminated?: () => void
@@ -62,6 +62,7 @@ export function startFrameLoop(
     stopped = true
     if (timer !== undefined) clearTimeout(timer)
     timer = undefined
+    renderer.setFrameWake?.(null)
   }
   const loop = () => {
     if (stopped) return
@@ -79,6 +80,12 @@ export function startFrameLoop(
     }
     timer = setTimeout(loop, Math.max(0, frameMs - (performance.now() - started)))
   }
+  // A vsync wakes the loop at once, so a frame starts on the refresh rather than on the next timer tick.
+  renderer.setFrameWake?.(() => {
+    if (stopped) return
+    if (timer !== undefined) clearTimeout(timer)
+    loop()
+  })
   loop()
   return { stop }
 }

@@ -28,7 +28,7 @@ use napi_derive::napi;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
@@ -901,6 +901,40 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
         .unwrap_or_else(|| "unknown panic".to_string())
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+type FrameWakeFn = ThreadsafeFunction<(), (), (), napi::Status, false, true>;
+
+#[cfg(target_os = "macos")]
+static FRAME_WAKE_PENDING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+static FRAME_WAKE_JS: Mutex<Option<FrameWakeFn>> = Mutex::new(None);
+
+/// CoreVideo tears its display link threads down on occlusion and display
+/// changes. A napi call made from one leaves runtime thread state that is freed
+/// with the wrong allocator when it exits, so the link only unparks this
+/// thread, which lives for the process and makes the call.
+#[cfg(target_os = "macos")]
+fn frame_waker() -> &'static std::thread::Thread {
+    static WAKER: std::sync::OnceLock<std::thread::Thread> = std::sync::OnceLock::new();
+    WAKER.get_or_init(|| {
+        std::thread::Builder::new()
+            .name("gpuix-frame-wake".into())
+            .spawn(|| loop {
+                std::thread::park();
+                if !FRAME_WAKE_PENDING.load(Ordering::Acquire) {
+                    continue;
+                }
+                if let Some(wake) = FRAME_WAKE_JS.lock().unwrap().as_ref() {
+                    wake.call((), ThreadsafeFunctionCallMode::NonBlocking);
+                }
+            })
+            .expect("spawn the frame wake thread")
+            .thread()
+            .clone()
+    })
+}
+
 /// The main GPUI renderer exposed to Node.js.
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[napi]
@@ -1432,9 +1466,33 @@ impl GpuixRenderer {
 
     // ── Frame loop ───────────────────────────────────────────────────
 
+    /// Call `wake` at every vsync that requests a frame, so the JS loop can tick
+    /// on the refresh instead of waiting for its timer. Pass null to stop.
+    /// Wakes coalesce until the next `tick()`. A no-op off macOS.
+    #[napi(ts_args_type = "wake: (() => void) | null")]
+    pub fn set_frame_wake(&self, wake: Option<FrameWakeFn>) {
+        #[cfg(target_os = "macos")]
+        {
+            let enabled = wake.is_some();
+            *FRAME_WAKE_JS.lock().unwrap() = wake;
+            gpui_macos::set_frame_wake(enabled.then(|| {
+                let waker = frame_waker().clone();
+                Box::new(move || {
+                    if !FRAME_WAKE_PENDING.swap(true, Ordering::AcqRel) {
+                        waker.unpark();
+                    }
+                }) as Box<dyn Fn() + Send>
+            }));
+        }
+        #[cfg(not(target_os = "macos"))]
+        drop(wake);
+    }
+
     /// Pump the native event loop. Returns false after the last window closes.
     #[napi]
     pub fn tick(&self) -> Result<bool> {
+        #[cfg(target_os = "macos")]
+        FRAME_WAKE_PENDING.store(false, Ordering::Release);
         let initialized = *self.initialized.lock().unwrap();
         if !initialized {
             return Err(Error::from_reason(
