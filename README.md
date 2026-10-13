@@ -873,6 +873,22 @@ picker failures reject. The browser method rejects because browsers return
 `File` objects, not operating-system paths. An injected custom renderer can
 omit this optional capability.
 
+### Files the OS opens
+
+`setOpenPaths(open)` calls `open` with the absolute paths macOS asks the app to
+open: a Finder double-click on a file type the app declares, Open With, or a
+file dropped on the Dock icon. Paths that arrive before you subscribe, such as
+the file that launched the app, are held and delivered as soon as you do. Pass
+`null` to stop. It is a no-op on other platforms and in the browser.
+
+```tsx
+const renderer = useGpuixRequired()
+useEffect(() => {
+  renderer.setOpenPaths?.((paths) => paths.forEach(openDocument))
+  return () => renderer.setOpenPaths?.(null)
+}, [])
+```
+
 On the current Windows GPUI backend, the system dialog does not distinguish
 cancellation from other `IFileDialog::Show` errors, so both resolve with
 `null`. This needs a fix in GPUI before GPUIX can report those errors.

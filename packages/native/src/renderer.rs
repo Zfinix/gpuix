@@ -935,6 +935,54 @@ fn frame_waker() -> &'static std::thread::Thread {
     })
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+type OpenPathsFn = ThreadsafeFunction<Vec<String>, (), Vec<String>, napi::Status, false, true>;
+
+/// Files the OS asked the app to open (Finder double-click, Open With, a drop on
+/// the Dock icon). AppKit can deliver them before JS subscribes, so they wait here.
+#[cfg(target_os = "macos")]
+static OPENED_PATHS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[cfg(target_os = "macos")]
+static OPEN_PATHS_JS: Mutex<Option<OpenPathsFn>> = Mutex::new(None);
+
+/// GPUI hands over `file://` URLs; JS wants plain paths. Other schemes pass through.
+#[cfg(target_os = "macos")]
+fn opened_path(url: &str) -> String {
+    let Some(rest) = url.strip_prefix("file://") else {
+        return url.to_string();
+    };
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    let path = String::from_utf8_lossy(&out).into_owned();
+    if path.len() > 1 { path.trim_end_matches('/').to_string() } else { path }
+}
+
+#[cfg(target_os = "macos")]
+fn deliver_opened_paths(paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    match OPEN_PATHS_JS.lock().unwrap().as_ref() {
+        Some(callback) => {
+            callback.call(paths, ThreadsafeFunctionCallMode::NonBlocking);
+        }
+        None => OPENED_PATHS.lock().unwrap().extend(paths),
+    }
+}
+
 /// The main GPUI renderer exposed to Node.js.
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[napi]
@@ -1225,6 +1273,7 @@ impl GpuixRenderer {
         // Last window close quits AppKit; tick() returns false and JS exits.
         let app = gpui::Application::with_platform(platform.clone())
             .with_quit_mode(gpui::QuitMode::LastWindowClosed);
+        app.on_open_urls(|urls| deliver_opened_paths(urls.iter().map(|url| opened_path(url)).collect()));
         let app_handle = app.run_embedded(move |cx: &mut gpui::App| {
             crate::custom_elements::input::init(cx);
             crate::custom_elements::img::init(cx);
@@ -1486,6 +1535,25 @@ impl GpuixRenderer {
         }
         #[cfg(not(target_os = "macos"))]
         drop(wake);
+    }
+
+    /// Call `open` with the paths the OS asks the app to open: a Finder
+    /// double-click, Open With, or a file dropped on the Dock icon. Paths that
+    /// arrived before this call are delivered at once. Pass null to stop.
+    /// A no-op off macOS.
+    #[napi(ts_args_type = "open: ((paths: string[]) => void) | null")]
+    pub fn set_open_paths(&self, open: Option<OpenPathsFn>) {
+        #[cfg(target_os = "macos")]
+        {
+            let waiting = std::mem::take(&mut *OPENED_PATHS.lock().unwrap());
+            let subscribed = open.is_some();
+            *OPEN_PATHS_JS.lock().unwrap() = open;
+            if subscribed {
+                deliver_opened_paths(waiting);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        drop(open);
     }
 
     /// Pump the native event loop. Returns false after the last window closes.
