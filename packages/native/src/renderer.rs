@@ -983,6 +983,43 @@ fn deliver_opened_paths(paths: Vec<String>) {
     }
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+type ActivationFn = ThreadsafeFunction<bool, (), bool, napi::Status, false, true>;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub(crate) type MenuActionFn = ThreadsafeFunction<String, (), String, napi::Status, false, true>;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub(crate) type NotificationResponseFn =
+    ThreadsafeFunction<NotificationResponse, (), NotificationResponse, napi::Status, false, true>;
+
+#[cfg(target_os = "macos")]
+static WINDOW_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+static ACTIVATION_JS: Mutex<Option<ActivationFn>> = Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+fn window_activation_changed(active: bool) {
+    if WINDOW_ACTIVE.swap(active, Ordering::AcqRel) == active {
+        return;
+    }
+    if let Some(callback) = ACTIVATION_JS.lock().unwrap().as_ref() {
+        callback.call(active, ThreadsafeFunctionCallMode::NonBlocking);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn update_app<R>(update: impl FnOnce(&mut gpui::App) -> R) -> Result<R> {
+    GPUI_APP.with(|app| {
+        let app = app.borrow();
+        let app = app
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("GPUI application is not initialized"))?;
+        Ok(app.update(update))
+    })
+}
+
 /// The main GPUI renderer exposed to Node.js.
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[napi]
@@ -1295,6 +1332,13 @@ impl GpuixRenderer {
                 },
             ) {
                 Ok(window_handle) => {
+                    let _ = window_handle.update(cx, |_view, window, cx| {
+                        WINDOW_ACTIVE.store(window.is_window_active(), Ordering::Release);
+                        cx.observe_window_activation(window, |_view, window, _cx| {
+                            window_activation_changed(window.is_window_active())
+                        })
+                        .detach();
+                    });
                     *opened_window_for_app.borrow_mut() = Some(window_handle);
                     if activate {
                         cx.activate(true);
@@ -1554,6 +1598,125 @@ impl GpuixRenderer {
         }
         #[cfg(not(target_os = "macos"))]
         drop(open);
+    }
+
+    /// Replace the macOS menu bar with `menus`. Call it again whenever an item
+    /// should change. A no-op off macOS.
+    #[napi]
+    pub fn set_menus(&self, menus: Vec<MenuSpec>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_app(|cx| crate::app_menu::set_menus(&menus, cx))?
+            .map_err(Error::from_reason);
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            drop(menus);
+            Ok(())
+        }
+    }
+
+    /// Call `choose` with the `id` of a menu item that has no `keys` when the
+    /// user picks it. Pass null to stop. A no-op off macOS.
+    #[napi(ts_args_type = "choose: ((id: string) => void) | null")]
+    pub fn set_menu_action(&self, choose: Option<MenuActionFn>) {
+        #[cfg(target_os = "macos")]
+        crate::app_menu::set_menu_action(choose);
+        #[cfg(not(target_os = "macos"))]
+        drop(choose);
+    }
+
+    /// Whether `showNotification` can reach the system: only from inside an
+    /// app bundle on macOS.
+    #[napi]
+    pub fn notifications_available(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        return crate::notifications::available();
+        #[cfg(not(target_os = "macos"))]
+        false
+    }
+
+    /// Post a system notification. macOS asks the user for permission the
+    /// first time. A no-op when `notificationsAvailable()` is false.
+    #[napi]
+    pub fn show_notification(&self, notification: NotificationSpec) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_app(|cx| crate::notifications::show(notification, cx));
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            drop(notification);
+            Ok(())
+        }
+    }
+
+    /// Remove the notification with this tag from Notification Center.
+    #[napi]
+    pub fn dismiss_notification(&self, tag: String) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_app(|cx| crate::notifications::dismiss(&tag, cx));
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            drop(tag);
+            Ok(())
+        }
+    }
+
+    /// Call `respond` when the user clicks a notification or one of its
+    /// actions. Pass null to stop.
+    #[napi(ts_args_type = "respond: ((response: NotificationResponse) => void) | null")]
+    pub fn set_notification_response(&self, respond: Option<NotificationResponseFn>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_app(|cx| crate::notifications::set_response(respond, cx));
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            drop(respond);
+            Ok(())
+        }
+    }
+
+    /// Whether the window is the key window of the active app, or null where
+    /// GPUIX cannot tell (off macOS).
+    #[napi]
+    pub fn is_window_active(&self) -> Option<bool> {
+        #[cfg(target_os = "macos")]
+        return Some(WINDOW_ACTIVE.load(Ordering::Acquire));
+        #[cfg(not(target_os = "macos"))]
+        None
+    }
+
+    /// Call `changed` with true when the window becomes active and false when
+    /// the user moves to another window or app. Pass null to stop. A no-op off
+    /// macOS.
+    #[napi(ts_args_type = "changed: ((active: boolean) => void) | null")]
+    pub fn set_window_activation(&self, changed: Option<ActivationFn>) {
+        #[cfg(target_os = "macos")]
+        {
+            *ACTIVATION_JS.lock().unwrap() = changed;
+        }
+        #[cfg(not(target_os = "macos"))]
+        drop(changed);
+    }
+
+    /// Show `label` on the Dock icon, or clear it with null or "". A no-op off
+    /// macOS.
+    #[napi]
+    pub fn set_dock_badge(&self, label: Option<String>) {
+        #[cfg(target_os = "macos")]
+        crate::dock::set_badge(label.as_deref());
+        #[cfg(not(target_os = "macos"))]
+        drop(label);
+    }
+
+    /// Bounce the Dock icon once, or until the app comes forward when
+    /// `critical`. macOS ignores it while the app is active. A no-op off macOS.
+    #[napi]
+    pub fn request_attention(&self, critical: Option<bool>) {
+        #[cfg(target_os = "macos")]
+        crate::dock::request_attention(critical.unwrap_or(false));
+        #[cfg(not(target_os = "macos"))]
+        drop(critical);
     }
 
     /// Pump the native event loop. Returns false after the last window closes.
@@ -7458,6 +7621,67 @@ pub struct DebugFrameOverlayStats {
     pub max_ms: Option<f64>,
     pub frames: f64,
     pub samples: f64,
+}
+
+/// One menu in the macOS menu bar, for `setMenus`. The first one is the
+/// application menu, whatever its label: macOS titles it after the app.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct MenuSpec {
+    pub label: String,
+    pub items: Vec<MenuItemSpec>,
+}
+
+/// One item in a `MenuSpec`. An item with `items` is a submenu.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, Clone, Default)]
+#[napi(object)]
+pub struct MenuItemSpec {
+    /// Passed to the `setMenuAction` callback when the item is chosen and has no `keys`.
+    pub id: Option<String>,
+    pub label: Option<String>,
+    /// Keystrokes like `"cmd-shift-k"`. Choosing the item presses them in the
+    /// window. Only a single keystroke with cmd or ctrl is shown beside the label.
+    pub keys: Option<String>,
+    /// Defaults to true. A disabled item is greyed out.
+    pub enabled: Option<bool>,
+    pub checked: Option<bool>,
+    /// `"separator"` | `"services"` | `"hide"` | `"hideOthers"` | `"showAll"` |
+    /// `"quit"` | `"minimize"` | `"zoom"` | `"close"`. A role item does its
+    /// built-in job; `label` overrides its default name.
+    pub role: Option<String>,
+    pub items: Option<Vec<MenuItemSpec>>,
+}
+
+/// A notification for `showNotification`. A newer one with the same `tag`
+/// replaces the older one.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct NotificationSpec {
+    pub tag: String,
+    pub title: String,
+    pub body: String,
+    pub actions: Option<Vec<NotificationActionSpec>>,
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct NotificationActionSpec {
+    pub id: String,
+    pub label: String,
+}
+
+/// What the user clicked on a notification: one of its actions, or the
+/// notification itself when `actionId` is missing.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct NotificationResponse {
+    pub tag: String,
+    pub action_id: Option<String>,
 }
 
 /// Wayland `wlr-layer-shell` surface options. Linux/Wayland only; ignored on

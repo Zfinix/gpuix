@@ -87,6 +87,12 @@ tar = "0.4"
 flate2 = "1"
 # Production uses the embedded AppKit loop; tests use the native Metal renderer.
 gpui_macos = { path = "../../zed/crates/gpui_macos", default-features = false, features = ["font-kit"] }
+# Same versions as gpui_macos. GPUI has no API for the Dock tile, the current
+# event or the bundle id, so `dock.rs`, `app_menu.rs` and `notifications.rs`
+# reach AppKit directly.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSEvent", "NSResponder"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSBundle", "NSString"] }
 
 # Same crate GPUI uses. A .node cannot ship an exe manifest, so Windows DPI
 # awareness is set at runtime in renderer.rs instead of via windows-manifest.

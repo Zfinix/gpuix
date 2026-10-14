@@ -18,9 +18,13 @@ mod automation;
 mod color;
 mod custom_elements;
 mod diff;
+#[cfg(target_os = "macos")]
+mod dock;
 mod element_tree;
 mod markdown;
 mod motion;
+#[cfg(target_os = "macos")]
+mod notifications;
 mod renderer;
 // The data model is public so `examples/bench_serde.rs` measures the real
 // types instead of a copy that silently drifts from them.

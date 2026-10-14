@@ -778,9 +778,97 @@ from the executable, so `bun app.tsx` shows `bun` during development and a
 `bun build --compile` binary shows its own file name. Only a real `.app` bundle
 changes it. `appName` reaches the items inside the menu, and nothing else.
 
-There is **no Edit menu**, on purpose. A menu key equivalent is consumed by
-AppKit before the window sees the key event, so an Edit menu carrying `⌘C`
-would take the keystroke away from text selection and from `<input>`.
+The default bar has **no Edit menu**. Set your own with `setMenus` when you
+want one.
+
+#### Your own menus
+
+`setMenus(menus)` replaces the whole bar. Call it again whenever an item should
+change: a label, a check mark, or whether it is greyed out. The first menu is
+the application menu, whatever its label.
+
+```tsx
+const renderer = useGpuixRequired()
+useEffect(() => {
+  renderer.setMenus?.([
+    { label: 'Notes', items: [{ role: 'services' }, { role: 'separator' }, { role: 'quit' }] },
+    { label: 'File', items: [
+      { id: 'new', label: 'New Note', keys: 'cmd-n' },
+      { id: 'export', label: 'Export…', enabled: hasNote },
+      { label: 'Open Recent', items: recent.map((note) => ({ id: `open:${note.id}`, label: note.title })) },
+    ] },
+    { label: 'Edit', items: [
+      { label: 'Copy', keys: 'cmd-c' },
+      { label: 'Paste', keys: 'cmd-v' },
+    ] },
+    { label: 'Window', items: [{ role: 'minimize' }, { role: 'zoom' }] },
+  ])
+  renderer.setMenuAction?.((id) => run(id))
+  return () => renderer.setMenuAction?.(null)
+}, [hasNote, recent])
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | Passed to the `setMenuAction` callback when an item with no `keys` is chosen |
+| `label` | The item's name. Role items have a default |
+| `keys` | Keystrokes such as `"cmd-shift-k"`. Choosing the item presses them in the window |
+| `enabled` | Defaults to `true`. `false` greys the item out |
+| `checked` | Shows a check mark |
+| `role` | `separator`, `services`, `hide`, `hideOthers`, `showAll`, `quit`, `minimize`, `zoom`, `close` |
+| `items` | Makes the item a submenu |
+
+**An item with `keys` acts exactly like the keyboard.** Clicking it presses
+those keys in the window, so a focused `<input>` copies and pastes, and window
+key listeners run your shortcut. Typing the shortcut reaches the window first,
+as it does without a menu, and the menu then only flashes its title, so
+nothing runs twice.
+
+**Only a single keystroke with `cmd` or `ctrl` shows beside the label.** AppKit
+treats a menu shortcut as its own, so `"n"` or `"alt-z"` in the menu would take
+that key away from every text field. Such items still press their keys when
+chosen, but show no shortcut. Give an item an `id` and no `keys` to have it
+call back instead of pressing anything.
+
+`setMenus` is a no-op off macOS and throws on an unknown role or a shortcut
+GPUI cannot parse.
+
+### Notifications
+
+`showNotification` posts to Notification Center. macOS asks the user for
+permission the first time. A newer notification with the same `tag` replaces
+the older one, and `dismissNotification(tag)` removes it.
+
+```tsx
+renderer.showNotification?.({
+  tag: `build:${id}`,
+  title: 'Build finished',
+  body: '3 warnings',
+  actions: [{ id: 'open', label: 'Open log' }],
+})
+renderer.setNotificationResponse?.(({ tag, actionId }) => {
+  // actionId is missing when the notification itself was clicked
+})
+```
+
+Clicking the notification brings the app forward. Action buttons answer
+without bringing it forward.
+
+**Notifications only work from an app bundle.** macOS refuses them to a bare
+`bun app.tsx` process. `notificationsAvailable()` says whether they will
+arrive, so an app can fall back to something else in development.
+
+### Focus and the Dock
+
+`isWindowActive()` says whether the window is the key window of the frontmost
+app, and `setWindowActivation(changed)` calls `changed(active)` whenever that
+flips. Use them to notify only when the user is somewhere else. Both are macOS
+only; `isWindowActive()` returns `null` elsewhere.
+
+`setDockBadge(label)` shows a short label on the Dock icon, and `null` or `""`
+clears it. `requestAttention()` bounces the Dock icon once;
+`requestAttention(true)` keeps bouncing until the app comes forward. macOS
+ignores it while the app is already active.
 
 Use **`render()`**, not `createRenderer()`, in the app entry. `bun --hot`
 re-runs the whole file on save. `createRenderer()` plus `init()` would then
