@@ -1716,7 +1716,7 @@ impl GpuixRenderer {
         #[cfg(target_os = "macos")]
         crate::dock::request_attention(critical.unwrap_or(false));
         #[cfg(not(target_os = "macos"))]
-        drop(critical);
+        let _ = critical;
     }
 
     /// Pump the native event loop. Returns false after the last window closes.
