@@ -702,6 +702,7 @@ export type NativeRenderer = MutationHost &
       | "getWindowSize"
       | "getWindowInsets"
       | "setWindowTitle"
+      | "setWindowBlurRadius"
       | "registerFont"
       | "promptForPaths"
       | "setOpenPaths"

@@ -112,6 +112,11 @@ export declare class GpuixRenderer {
   /** Enter or exit native fullscreen. */
   toggleFullscreen(): void
   setWindowTitle(title: string): void
+  /**
+   * Set the blur radius, in points, behind a `"blurred"` window. `null` restores the system
+   * blur. Only macOS can change it; elsewhere this does nothing.
+   */
+  setWindowBlurRadius(radius?: number | undefined | null): void
   /** Open the platform path picker. Returns null when the user cancels. */
   promptForPaths(options?: PathPromptOptions | undefined | null): Promise<Array<string> | null>
   focusElement(elementId: number): void

@@ -748,6 +748,15 @@ terminal.
 
 Call it again after a save and it remounts the tree on the same window.
 
+On macOS a `"blurred"` window can change how strongly it blurs while it runs.
+`setWindowBlurRadius(radius)` takes points, and `null` restores the system blur.
+It does nothing on other platforms and in the browser.
+
+```tsx
+const { renderer } = useGpuix()
+renderer.setWindowBlurRadius?.(12)
+```
+
 ### The macOS menu bar
 
 GPUIX installs the application menu bar for you, so a fresh app already answers
@@ -3876,7 +3885,7 @@ The test renderer uses `VisualTestAppContext` with a `TestDispatcher` for determ
 - [x] Native `hover` and `active` styles
 - [x] Window title (`setWindowTitle`)
 - [x] Native window controls (`minimizeWindow`, `zoomWindow`, `toggleFullscreen`)
-- [x] Window chrome (`titlebarTransparent`, `windowBackground`, traffic-light position)
+- [x] Window chrome (`titlebarTransparent`, `windowBackground`, `setWindowBlurRadius`, traffic-light position)
 - [x] macOS menu bar with the standard shortcuts (`appName`)
 - [ ] App-declared menus and menu callbacks
 - [x] Background launch (`focus`, `show`, `activateWindow`)

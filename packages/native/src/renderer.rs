@@ -1897,6 +1897,22 @@ impl GpuixRenderer {
         ))
     }
 
+    /// Set the blur radius, in points, behind a `"blurred"` window. `null` restores the system
+    /// blur. Only macOS can change it; elsewhere this does nothing.
+    #[napi]
+    pub fn set_window_blur_radius(&self, radius: Option<f64>) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        return update_window(move |_view, window, _cx| {
+            window.set_background_blur_radius(radius.map(|radius| radius as f32));
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = radius;
+            Ok(())
+        }
+    }
+
     /// Open the platform path picker. Returns null when the user cancels.
     #[napi(ts_return_type = "Promise<Array<string> | null>")]
     pub fn prompt_for_paths<'env>(
@@ -3136,6 +3152,9 @@ impl WebGpuixRenderer {
             cx.notify();
         })
     }
+
+    #[wasm_bindgen::prelude::wasm_bindgen(js_name = setWindowBlurRadius)]
+    pub fn set_window_blur_radius(&self, _radius: Option<f64>) {}
 
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = promptForPaths)]
     pub fn prompt_for_paths(&self, _options: wasm_bindgen::JsValue) -> js_sys::Promise {
