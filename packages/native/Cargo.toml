@@ -46,7 +46,8 @@ ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 syntect = { version = "5.3", default-features = false, features = ["regex-onig"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
-gpui = { path = "../../zed/crates/gpui", default-features = false, features = ["font-kit", "profiler"] }
+# gpui_linux/x11 does not enable gpui/x11, so without it an X11-only session opens no window.
+gpui = { path = "../../zed/crates/gpui", default-features = false, features = ["font-kit", "profiler", "x11"] }
 gpui_platform = { path = "../../zed/crates/gpui_platform", default-features = false, features = ["font-kit", "wayland", "x11"] }
 # Same client GPUI's image examples and Zed use. `img(SharedUri)` fetches
 # through `App::http_client`; without this, GPUI's NullHttpClient fails every URL.
