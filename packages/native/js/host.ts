@@ -551,6 +551,13 @@ export type VirtualListShared = {
    *  state. Put those on a wrapping `<div>` instead. */
   style?: Omit<StyleDesc, "hover" | "active">
   alignment?: "top" | "bottom"
+  /**
+   * Width of the widest row, in pixels. A list scrolls its rows vertically
+   * and cannot also scroll sideways, so with `overflowX: "scroll"` it sits in
+   * a viewport that can, and this is how wide its rows are. A list measures
+   * rows lazily, so it never knows its own widest row; the caller does.
+   */
+  contentWidth?: number
   followTail?: boolean
   overdraw?: number
   onVisibleRange?: (event: EventPayload) => void

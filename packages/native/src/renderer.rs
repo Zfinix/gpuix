@@ -5646,7 +5646,7 @@ fn build_virtual_list(
         list = apply_styles(list, style);
     }
     let list = apply_accessibility(list, element.custom_props(), None).into_any_element();
-    match element
+    let list = match element
         .style
         .as_deref()
         .and_then(|style| ThumbStyle::of(style, false, true))
@@ -5658,7 +5658,55 @@ fn build_virtual_list(
         }
         .into_any_element(),
         None => list,
+    };
+    horizontal_viewport(element, list)
+}
+
+/// A list scrolls its rows vertically and cannot also scroll sideways, so
+/// `overflowX: "scroll"` puts it inside a viewport that can.
+///
+/// The rows have to be wider than the viewport for there to be anything to
+/// scroll to, and a list measures rows lazily, so it never knows its widest
+/// row. `contentWidth` is that width, in pixels, from the caller that does.
+fn horizontal_viewport(
+    element: &crate::retained_tree::RetainedElement,
+    list: gpui::AnyElement,
+) -> gpui::AnyElement {
+    use gpui::prelude::*;
+
+    let style = element.style.as_deref();
+    let scrolls = style
+        .and_then(|style| style.overflow_x.as_deref().or(style.overflow.as_deref()))
+        == Some("scroll");
+    let width = element
+        .custom_props()
+        .get("contentWidth")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or_default();
+    if !scrolls || width <= 0.0 {
+        return list;
     }
+    gpui::div()
+        .id(gpui::ElementId::Name(gpui::SharedString::from(format!(
+            "__gpuix_virtual_list_x_{}",
+            element.id
+        ))))
+        .flex()
+        .flex_grow(1.0)
+        .min_w_0()
+        .min_h_0()
+        .overflow_x_scroll()
+        .restrict_scroll_to_axis()
+        .child(
+            gpui::div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .h_full()
+                .w(gpui::px(width as f32))
+                .child(list),
+        )
+        .into_any_element()
 }
 
 fn unmounted_virtual_row(height: f32) -> gpui::AnyElement {
