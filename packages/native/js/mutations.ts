@@ -141,6 +141,7 @@ export const UNIVERSAL_PROPS: ReadonlySet<string> = new Set([
   "motion",
   "testId",
   "highlight",
+  "spans",
   "role",
   "aria-label",
   "aria-description",

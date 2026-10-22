@@ -485,6 +485,18 @@ export interface HostProps {
    * `highlight` replaces an ancestor's for its own subtree.
    */
   highlight?: HighlightSpec | HighlightSpec[] | null
+  /**
+   * Per-range text colours for this element's string, as `[start, end, colour]`
+   * in UTF-16 code units: the units `indexOf` and `RegExp.exec` return.
+   *
+   * One coloured line then costs ONE element instead of one per token. Every
+   * run shares the inherited font and differs only in colour, so colouring
+   * never reflows, and a span may be recomputed between frames for free.
+   *
+   * Ranges must be sorted and must not overlap; one that is not is dropped
+   * rather than shifting the runs after it. Gaps keep the inherited colour.
+   */
+  spans?: ReadonlyArray<readonly [number, number, string]>
 
   // ── Focus props ────────────────────────────────────────────────
   /** Take keyboard focus when the element first mounts. Required for `<input>`:

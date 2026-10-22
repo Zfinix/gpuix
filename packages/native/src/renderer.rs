@@ -6078,7 +6078,7 @@ pub(crate) fn build_host_container(
     // `{cond && x}`). Emitting those as full-height lines inflated every
     // conditional row. React never sends empty text, so this is a no-op there.
     if let Some(content) = element.content.as_deref().filter(|value| !value.is_empty()) {
-        el = el.child(text_content(element, content, ctx));
+        el = el.child(text_content(element, content, ctx, window));
     }
 
     // Children
@@ -6386,7 +6386,9 @@ fn text_content(
     element: &crate::retained_tree::RetainedElement,
     content: &str,
     ctx: &BuildCtx,
+    window: &mut gpui::Window,
 ) -> gpui::AnyElement {
+    let runs = span_runs(element, content, ctx, window);
     selectable_text(crate::text::SelectableText {
         group: crate::text::search::group_id(ctx.tree, element.id),
         selectable: ctx.inherited.selectable,
@@ -6399,11 +6401,77 @@ fn text_content(
             element.id,
             0,
             gpui::SharedString::from(content.to_string()),
-            None,
+            runs,
             ctx.selection.clone(),
             ctx.inherited.selection_wash,
         )
     })
+}
+
+/// Byte offset for each UTF-16 code unit boundary, so `spans` can index text
+/// the way `indexOf` and `RegExp.exec` do on the JS side.
+fn utf16_to_byte(text: &str, want: usize) -> usize {
+    if text.is_ascii() {
+        return want.min(text.len());
+    }
+    let mut units = 0usize;
+    for (at, ch) in text.char_indices() {
+        if units >= want {
+            return at;
+        }
+        units += ch.len_utf16();
+    }
+    text.len()
+}
+
+/// `spans` turns one text node into a list of coloured runs, so a syntax-
+/// coloured line costs one element instead of one per token. Every run shares
+/// the inherited font and differs only in colour, so colouring never reflows.
+///
+/// React gives a string its own node, so the prop is read from the declaring
+/// parent when this node has none of its own.
+fn span_runs(
+    element: &crate::retained_tree::RetainedElement,
+    content: &str,
+    ctx: &BuildCtx,
+    window: &mut gpui::Window,
+) -> Option<Vec<gpui::TextRun>> {
+    let declared = element.custom_props().get("spans").or_else(|| {
+        element
+            .parent
+            .and_then(|parent| ctx.tree.elements.get(&parent))
+            .and_then(|parent| parent.custom_props().get("spans"))
+    })?;
+    let listed = declared.as_array()?;
+    if listed.is_empty() {
+        return None;
+    }
+    let mut spans: Vec<(std::ops::Range<usize>, gpui::Hsla)> = Vec::with_capacity(listed.len());
+    for entry in listed {
+        let parts = entry.as_array()?;
+        let (start, end, color) = (parts.first()?, parts.get(1)?, parts.get(2)?.as_str()?);
+        let start = utf16_to_byte(content, start.as_u64()? as usize);
+        let end = utf16_to_byte(content, end.as_u64()? as usize);
+        // Sorted and non-overlapping is `runs_for_spans`'s contract; a span
+        // that breaks it is dropped rather than shifting every later run.
+        if end <= start || spans.last().is_some_and(|(last, _)| start < last.end) {
+            continue;
+        }
+        spans.push((
+            start..end,
+            gpui::Rgba::from(crate::color::parse_color_rgba(color)?).into(),
+        ));
+    }
+    if spans.is_empty() {
+        return None;
+    }
+    let style = window.text_style();
+    Some(crate::text::runs::runs_for_spans(
+        content,
+        &spans,
+        &style.font(),
+        style.color,
+    ))
 }
 
 /// Explicit `userSelect` on this node. `None` means inherit; the ancestor
