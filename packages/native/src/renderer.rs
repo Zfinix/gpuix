@@ -5654,7 +5654,7 @@ fn build_virtual_list(
     match element
         .style
         .as_deref()
-        .and_then(|style| ThumbStyle::of(style, false, true))
+        .and_then(|style| ThumbStyle::of(style, element.id, false, true))
     {
         Some(thumbs) => ListWithScrollbar {
             list,
@@ -6147,6 +6147,7 @@ pub(crate) fn build_host_container(
     if let (Some(style), Some(handle)) = (style, ctx.scroll_handles.get(&element.id)) {
         if let Some(thumbs) = ThumbStyle::of(
             style,
+            element.id,
             style.overflow_x.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
             style.overflow_y.as_deref().or(style.overflow.as_deref()) == Some("scroll"),
         ) {
@@ -6177,8 +6178,10 @@ fn scrollbar_thumb(track: f32, max_scroll: f32, offset: f32) -> Option<(f32, f32
 }
 
 /// What a scroller asks its thumbs to look like, and along which axes it has any.
+/// `key` is the scroller's element id, which remembers when it last moved.
 #[derive(Clone, Copy)]
 struct ThumbStyle {
+    key: u64,
     color: gpui::Hsla,
     thickness: f32,
     horizontal: bool,
@@ -6187,12 +6190,13 @@ struct ThumbStyle {
 
 impl ThumbStyle {
     /// `None` unless the style names a `scrollbarColor` that parses.
-    fn of(style: &StyleDesc, horizontal: bool, vertical: bool) -> Option<Self> {
+    fn of(style: &StyleDesc, key: u64, horizontal: bool, vertical: bool) -> Option<Self> {
         let color = style
             .scrollbar_color
             .as_deref()
             .and_then(crate::color::parse_color_rgba)?;
         Some(Self {
+            key,
             color: color.into(),
             thickness: style.scrollbar_width.unwrap_or(SCROLLBAR_WIDTH as f64) as f32,
             horizontal,
@@ -6201,10 +6205,90 @@ impl ThumbStyle {
     }
 }
 
+/// How long a thumb stays after its content last moved, the way macOS overlay
+/// scrollbars do. At rest there is no thumb.
+const THUMB_SHOWN: Duration = Duration::from_millis(1000);
+
+/// One scroller's thumb: where its content was, when the thumb is due to hide,
+/// and whether a timer is already waiting to repaint it away.
+struct ThumbClock {
+    offset: gpui::Point<gpui::Pixels>,
+    hide_at: web_time::Instant,
+    waiting: bool,
+}
+
+thread_local! {
+    static THUMB_CLOCKS: RefCell<HashMap<u64, ThumbClock>> = RefCell::new(HashMap::new());
+}
+
+/// Whether a scroller's thumb shows now: only while its content has moved in
+/// the last `THUMB_SHOWN`. A scroller seen for the first time is at rest.
+fn thumb_visible(key: u64, offset: gpui::Point<gpui::Pixels>, now: web_time::Instant) -> bool {
+    THUMB_CLOCKS.with(|clocks| {
+        let mut clocks = clocks.borrow_mut();
+        if clocks.len() > 512 {
+            clocks.retain(|_, clock| clock.waiting || clock.hide_at > now);
+        }
+        let clock = clocks.entry(key).or_insert(ThumbClock {
+            offset,
+            hide_at: now,
+            waiting: false,
+        });
+        if clock.offset != offset {
+            clock.offset = offset;
+            clock.hide_at = now + THUMB_SHOWN;
+        }
+        now < clock.hide_at
+    })
+}
+
+/// Repaints once when a shown thumb is due to hide. One timer per scroller,
+/// pushed back while it keeps scrolling, so a thumb never costs extra frames.
+fn hide_thumb_later(key: u64, window: &gpui::Window, cx: &gpui::App) {
+    let now = web_time::Instant::now();
+    let wait = THUMB_CLOCKS.with(|clocks| {
+        let mut clocks = clocks.borrow_mut();
+        let clock = clocks.get_mut(&key)?;
+        if clock.waiting {
+            return None;
+        }
+        clock.waiting = true;
+        Some(clock.hide_at.saturating_duration_since(now))
+    });
+    let Some(mut wait) = wait else {
+        return;
+    };
+    window
+        .spawn(cx, async move |cx| {
+            loop {
+                cx.background_executor().timer(wait).await;
+                let again = THUMB_CLOCKS.with(|clocks| {
+                    let mut clocks = clocks.borrow_mut();
+                    let clock = clocks.get_mut(&key)?;
+                    let now = web_time::Instant::now();
+                    if now < clock.hide_at {
+                        return Some(clock.hide_at.saturating_duration_since(now));
+                    }
+                    clock.waiting = false;
+                    None
+                });
+                match again {
+                    Some(next) => wait = next,
+                    None => break,
+                }
+            }
+            if let Err(error) = cx.update(|window, _| window.refresh()) {
+                log::debug!("scrollbar hide skipped after window teardown: {error}");
+            }
+        })
+        .detach();
+}
+
 /// Paints the thumbs of a viewport at `origin` with `size`. `max` is how far
 /// its content can move and `offset` how far it has (zero or negative).
 fn paint_scrollbars(
     window: &mut gpui::Window,
+    cx: &gpui::App,
     origin: gpui::Point<gpui::Pixels>,
     size: gpui::Size<gpui::Pixels>,
     max: gpui::Point<gpui::Pixels>,
@@ -6212,11 +6296,16 @@ fn paint_scrollbars(
     thumbs: ThumbStyle,
 ) {
     let ThumbStyle {
+        key,
         color,
         thickness,
         horizontal,
         vertical,
     } = thumbs;
+    if !thumb_visible(key, offset, web_time::Instant::now()) {
+        return;
+    }
+    hide_thumb_later(key, window, cx);
     let (width, height) = (f32::from(size.width), f32::from(size.height));
     let along = |show: bool, track: f32, max_scroll: gpui::Pixels, offset: gpui::Pixels| {
         show.then(|| scrollbar_thumb(track, f32::from(max_scroll), f32::from(offset)))
@@ -6266,10 +6355,11 @@ fn scrollbar_overlay(handle: gpui::ScrollHandle, thumbs: ThumbStyle) -> gpui::An
 
     gpui::canvas(
         |_, _, _| (),
-        move |bounds, _, window, _| {
+        move |bounds, _, window, cx| {
             let offset = handle.offset();
             paint_scrollbars(
                 window,
+                cx,
                 bounds.origin - offset,
                 bounds.size,
                 handle.max_offset(),
@@ -6371,13 +6461,24 @@ impl gpui::Element for ListWithScrollbar {
     ) {
         self.list.paint(window, cx);
         let (max, offset) = list_scroll_extent(&self.state);
-        paint_scrollbars(window, bounds.origin, bounds.size, max, offset, self.thumbs);
+        paint_scrollbars(window, cx, bounds.origin, bounds.size, max, offset, self.thumbs);
     }
 }
 
 #[cfg(test)]
 mod scrollbar_tests {
-    use super::scrollbar_thumb;
+    use super::{scrollbar_thumb, thumb_visible, THUMB_SHOWN};
+
+    #[test]
+    fn a_thumb_is_hidden_at_rest_and_shows_while_its_content_moves() {
+        let start = web_time::Instant::now();
+        let at = |y: f32| gpui::point(gpui::px(0.0), gpui::px(y));
+        assert!(!thumb_visible(1, at(0.0), start));
+        assert!(thumb_visible(1, at(-40.0), start));
+        assert!(thumb_visible(1, at(-40.0), start + THUMB_SHOWN / 2));
+        assert!(!thumb_visible(1, at(-40.0), start + THUMB_SHOWN));
+        assert!(thumb_visible(1, at(-80.0), start + THUMB_SHOWN * 2));
+    }
 
     #[test]
     fn a_thumb_is_the_viewports_share_of_the_content() {
