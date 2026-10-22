@@ -6462,7 +6462,16 @@ fn span_runs(
             gpui::Rgba::from(crate::color::parse_color_rgba(color)?).into(),
         ));
     }
-    if spans.is_empty() {
+    // Colouring only part of the string would leave gaps, and a gap is painted
+    // in whatever this build inherits, which is not yet the element's own
+    // style. Partial cover falls back to plain text rather than drawing a
+    // colour the caller never asked for.
+    let covers_all = spans.first().is_some_and(|(range, _)| range.start == 0)
+        && spans.last().is_some_and(|(range, _)| range.end == content.len())
+        && spans
+            .windows(2)
+            .all(|pair| pair[0].0.end == pair[1].0.start);
+    if spans.is_empty() || !covers_all {
         return None;
     }
     let style = window.text_style();

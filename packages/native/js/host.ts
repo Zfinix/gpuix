@@ -493,8 +493,12 @@ export interface HostProps {
    * run shares the inherited font and differs only in colour, so colouring
    * never reflows, and a span may be recomputed between frames for free.
    *
-   * Ranges must be sorted and must not overlap; one that is not is dropped
-   * rather than shifting the runs after it. Gaps keep the inherited colour.
+   * Ranges must be sorted, must not overlap, and must cover the whole string.
+   * A range that breaks the order is dropped rather than shifting the runs
+   * after it, and a partial cover is ignored entirely: a gap would be painted
+   * in the colour this element inherits, which is resolved too early to be
+   * the element's own, so colouring some of a string is refused rather than
+   * drawn wrong.
    */
   spans?: ReadonlyArray<readonly [number, number, string]>
 
