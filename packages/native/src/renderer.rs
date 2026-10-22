@@ -5646,7 +5646,12 @@ fn build_virtual_list(
         list = apply_styles(list, style);
     }
     let list = apply_accessibility(list, element.custom_props(), None).into_any_element();
-    let list = match element
+    // The horizontal viewport goes on first, so the vertical thumb is painted
+    // over the viewport and stays at its right edge. Inside it, the thumb
+    // would sit at the right edge of the content and only come into view once
+    // the reader had scrolled all the way across.
+    let list = horizontal_viewport(element, list);
+    match element
         .style
         .as_deref()
         .and_then(|style| ThumbStyle::of(style, false, true))
@@ -5658,8 +5663,7 @@ fn build_virtual_list(
         }
         .into_any_element(),
         None => list,
-    };
-    horizontal_viewport(element, list)
+    }
 }
 
 /// A list scrolls its rows vertically and cannot also scroll sideways, so
